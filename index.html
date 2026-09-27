@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Shrimp Farm</title>
+  <meta name="theme-color" content="#1e88e5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Shrimp Farm">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <header id="topbar">
+    <div class="pill" id="pearls" title="Pearls: +10% income each" hidden>🦪 <span>0</span></div>
+    <div class="pill cash"><span class="coin">$</span> <b id="cash">0</b></div>
+    <div class="pill rate"><span id="rate">0</span>/s</div>
+  </header>
+
+  <button id="buymode" class="chip">Buy ×1</button>
+
+  <div id="cards"></div>
+  <div id="floaters"></div>
+
+  <div id="hint" hidden>Your catch goes into the cooler 👇 tap <b>Collect</b> to cash it in</div>
+
+  <nav id="bottombar">
+    <button class="navbtn" id="btn-lab"><span class="ico">🧪</span><span>Lab</span></button>
+    <button id="collect">
+      <span class="amt">$<b id="pending">0</b></span>
+      <span class="lbl" id="collect-lbl">COLLECT</span>
+      <span class="sub" id="collect-sub"></span>
+      <span class="bar"><i id="fillbar"></i></span>
+    </button>
+    <button class="navbtn" id="btn-expand"><span class="ico">🏗️</span><span>Expand</span></button>
+    <button class="navbtn" id="btn-menu"><span class="ico">⚙️</span><span>Farm</span></button>
+  </nav>
+
+  <div id="sheet-backdrop" hidden></div>
+  <section id="sheet" hidden>
+    <div class="grab"></div>
+    <div id="sheet-body"></div>
+  </section>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
