@@ -285,16 +285,32 @@ export function lockedPlot() {
 }
 
 // Straight conveyor along +Z of length `len`, with orange rails.
-export function conveyor(len, width = 1.6) {
+// opts.railTrimEnd shortens both rails at the +Z end (a feeder stops at the
+// main belt's outer rail). opts.gaps lists local Z centres where the -X rail
+// is left open (width opts.gapWidth) so a feeder can join the belt there.
+export function conveyor(len, width = 1.6, { railTrimEnd = 0, gaps = [], gapWidth = 0.7 } = {}) {
   const g = new THREE.Group();
   const belt = mesh(new THREE.BoxGeometry(width, 0.12, len), mat('#4a4f57'), { receive: true });
   belt.position.y = 0.3;
   g.add(belt);
-  for (const x of [-1, 1]) {
-    const rail = mesh(new THREE.BoxGeometry(0.14, 0.26, len), mat('#f57c00'));
-    rail.position.set(x * (width / 2 + 0.07), 0.36, 0);
+  const railMat = mat('#f57c00');
+  const railSeg = (x, z0, z1) => {
+    if (z1 - z0 < 0.01) return;
+    const rail = mesh(new THREE.BoxGeometry(0.14, 0.26, z1 - z0), railMat);
+    rail.position.set(x * (width / 2 + 0.07), 0.36, (z0 + z1) / 2);
     g.add(rail);
+  };
+  const zEnd = len / 2 - railTrimEnd;
+  railSeg(1, -len / 2, zEnd);
+  // -X rail, split around the feeder gaps.
+  let z = -len / 2;
+  for (const gz of [...gaps].sort((a, b) => a - b)) {
+    const a = gz - gapWidth / 2, b = gz + gapWidth / 2;
+    if (b < z || a > zEnd) continue;
+    railSeg(-1, z, Math.min(a, zEnd));
+    z = Math.max(z, b);
   }
+  railSeg(-1, z, zEnd);
   for (let z = -len / 2 + 0.5; z < len / 2; z += 2.5) {
     for (const x of [-1, 1]) {
       const leg = mesh(new THREE.BoxGeometry(0.12, 0.3, 0.12), mat('#37474f'));
@@ -350,17 +366,70 @@ export function cooler() {
   return g;
 }
 
-// Small packed tray that rides the belt, tinted per species.
-const TRAY_BASE = new THREE.BoxGeometry(0.42, 0.1, 0.32);
-const TRAY_TOP = new THREE.BoxGeometry(0.34, 0.08, 0.24);
-export function tray(color) {
-  const g = new THREE.Group();
-  const base = mesh(TRAY_BASE, mat('#fafafa'), { cast: false });
-  g.add(base);
-  const top = mesh(TRAY_TOP, mat(color), { cast: false });
-  top.position.y = 0.07;
-  g.add(top);
-  return g;
+// ---------- products on the belt ----------
+// Each species' creature template is baked into one merged, vertex-coloured
+// BufferGeometry so a single InstancedMesh can draw every unit of that species.
+
+// Merge every mesh under `root` (in root space) into one non-indexed geometry
+// with position, normal and a per-vertex colour taken from the part's material.
+export function mergeColored(root) {
+  root.updateMatrixWorld(true);
+  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const parts = [];
+  let n = 0;
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    let geo = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    geo.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toRoot, o.matrixWorld));
+    if (!geo.attributes.normal) geo.computeVertexNormals();
+    parts.push({ geo, color: o.material.color });
+    n += geo.attributes.position.count;
+  });
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  let off = 0;
+  for (const { geo, color } of parts) {
+    const c = geo.attributes.position.count;
+    pos.set(geo.attributes.position.array, off * 3);
+    nor.set(geo.attributes.normal.array, off * 3);
+    for (let k = 0; k < c; k++) {
+      col[(off + k) * 3] = color.r; col[(off + k) * 3 + 1] = color.g; col[(off + k) * 3 + 2] = color.b;
+    }
+    off += c;
+    geo.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return out;
+}
+
+// Length (along +X, the direction of travel) of each species' belt unit.
+const PRODUCT_LEN = {
+  shrimp: 0.95, crayfish: 0.95, tilapia: 0.95, catfish: 1.05,
+  trout: 1.05, salmon: 1.1, sturgeon: 1.25, tuna: 1.2,
+};
+
+// One belt unit's geometry: head at +X, centred on X/Z, resting on y = 0.
+// Fish lie on their side like a fresh catch; shrimp and crayfish sit upright.
+export function productGeometry(id) {
+  if (!templates.has(id)) templates.set(id, BUILDERS[id]());
+  const tpl = templates.get(id);
+  const geo = mergeColored(tpl);
+  if (tpl.userData.swim === 'fish') geo.rotateX(Math.PI / 2);
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  geo.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+  geo.scale(...Array(3).fill((PRODUCT_LEN[id] || 1) / (bb.max.x - bb.min.x)));
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+let productMat = null;
+export function productMaterial() {
+  if (!productMat) productMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.75 });
+  return productMat;
 }
 
 export function tree(scale = 1) {

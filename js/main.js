@@ -122,7 +122,7 @@ function renderCards(force) {
       const prev = [0, ...E.MILESTONES].filter((m) => m <= lv).pop();
       c.ms.style.display = '';
       c.msBar.style.width = next ? `${((lv - prev) / (next - prev)) * 100}%` : '100%';
-      c.earn.textContent = `$${E.fmt(E.tankRate(state, i))}/s`;
+      c.earn.textContent = `$${E.fmt(E.unitValue(state, i))} each\u2009·\u2009$${E.fmt(E.tankRate(state, i))}/s`;
       c.ms.title = next ? `×2 income at Lv ${next}` : '';
       c.what.textContent = next ? `+${n} Lv · ×2 at ${next}` : `+${n} Lv`;
     } else {
@@ -139,8 +139,9 @@ function renderCards(force) {
   });
 }
 
-// ---------- floating +$ text ----------
+// ---------- floating text ----------
 
+const FLOAT_MS = 1400;
 function floater(text, x, y, cls = '') {
   const el = document.createElement('div');
   el.className = 'floater ' + cls;
@@ -148,24 +149,41 @@ function floater(text, x, y, cls = '') {
   el.style.left = `${x}px`;
   el.style.top = `${y}px`;
   $('floaters').appendChild(el);
-  setTimeout(() => el.remove(), 1400);
+  setTimeout(() => el.remove(), FLOAT_MS);
 }
 
-const FLOAT_EVERY = 4;
-let floatT = 0;
-function tankFloaters(dt) {
-  floatT += dt;
-  if (floatT < FLOAT_EVERY) return;
-  floatT = 0;
-  const full = state.pending >= E.coolerCapacity(state);
-  E.SPECIES.forEach((_, i) => {
-    if (!state.tanks[i]) return;
-    const p = farm.tankScreen(i);
-    if (p.behind || p.y < $('topbar').getBoundingClientRect().bottom + 20
-      || p.y > $('bottombar').getBoundingClientRect().top - 20) return;
-    const jitter = (Math.random() - 0.5) * 30;
-    floater(full ? 'Cooler full!' : '+$' + E.fmt(E.tankRate(state, i) * FLOAT_EVERY), p.x + 40 + jitter, p.y - 20);
-  });
+// Money only counts when a unit lands in the cooler, so that's where the
+// "+$" shows up. Arrivals are grouped into one label every BATCH_MS so a busy
+// belt reads as a steady ticker instead of a pile of overlapping numbers.
+const BATCH_MS = 700;
+const FULL_EVERY = 2000;
+let batch = 0;
+let batchStart = 0;
+let batchSide = 1;
+let lastFullFloater = -1e9;
+function arrivalFloatersFor(arrived) {
+  const now = performance.now();
+  for (const a of arrived || []) {
+    if (a.lost) {
+      if (now - lastFullFloater < FULL_EVERY) continue;
+      lastFullFloater = now;
+      showAtCooler('Cooler full', 0, 'lost');
+    } else {
+      if (!batch) batchStart = now;
+      batch += a.v;
+    }
+  }
+  if (batch && now - batchStart >= BATCH_MS) {
+    batchSide = -batchSide;
+    showAtCooler('+$' + E.fmt(batch), batchSide * 28);
+    batch = 0;
+  }
+}
+function showAtCooler(text, dx, cls = '') {
+  const p = farm.coolerScreen();
+  if (p.behind || p.y < $('topbar').getBoundingClientRect().bottom
+    || p.y > $('bottombar').getBoundingClientRect().top) return;
+  floater(text, p.x + dx, p.y - (cls ? 24 : 10), cls);
 }
 
 // ---------- HUD ----------
@@ -328,7 +346,7 @@ function expandSheet() {
     ${gain
       ? `<button class="btn wide orange" data-act="prestige">Expand for +${E.fmt(gain)} 🦪</button>`
       : `<p>Earn $${E.fmt(need)} on this farm to unlock expanding (${pct.toFixed(1)}%).</p>`}
-    <p style="font-size:12px">Pearls earned grow with the square root of what this farm made, so longer runs pay more.</p>`;
+    <p style="font-size:12px">Pearls earned grow with the cube root of what this farm made: 8× the earnings for 2× the pearls.</p>`;
 }
 
 function menuSheet() {
@@ -340,9 +358,11 @@ function menuSheet() {
       <tr><td>Earned all-time</td><td>$${E.fmt(state.totalEarnings)}</td></tr>
       <tr><td>Farming for</td><td>${days.toFixed(1)} days</td></tr>
     </table>
-    <p><b>How it works:</b> tanks produce while the game is closed. When you come back
-    the game checks how long you were gone and packs the catch into the cooler —
-    up to its limit. Collect it, upgrade, and upgrade the Cold Storage in the lab to stay away longer.</p>
+    <p><b>How it works:</b> each tank sends its catch down the conveyor one at a time,
+    and it's worth money once it lands in the cooler. Tanks keep producing while the game
+    is closed: when you come back, the game works out everything that reached the cooler
+    while you were gone — up to its limit. Collect it, upgrade, and research Cold Storage
+    in the lab to stay away longer.</p>
     <p><b>Backup save</b> (copy this somewhere to move your farm between devices):</p>
     <textarea spellcheck="false" placeholder="Tap Export, or paste a code and tap Import"></textarea>
     <div style="display:flex;gap:8px;margin-top:8px">
@@ -364,13 +384,13 @@ function welcomeBack(res) {
   if (!$('sheet').hidden) {
     // Don't wipe out a sheet the player is using (e.g. mid-import).
     const p = farm.coolerScreen();
-    floater(`+$${E.fmt(res.made)} while away`, window.innerWidth / 2, p.y, 'tap');
+    floater(`+$${E.fmt(res.made)} delivered while away`, window.innerWidth / 2, p.y, 'tap');
     return;
   }
   const cap = E.coolerCapacity(state);
   openSheet(() => `
     <h2>Welcome back 🦐</h2>
-    <p>You were away for <b>${E.fmtDuration(res.elapsed)}</b>. Your farm packed:</p>
+    <p>You were away for <b>${E.fmtDuration(res.elapsed)}</b>. The conveyor delivered this catch to the cooler:</p>
     <div class="big">+$${E.fmt(res.made)}</div>
     ${res.wasFullAlready
       ? `<p>⚠️ The cooler was already full when you left, so nothing more could be packed.
@@ -413,13 +433,12 @@ canvas.addEventListener('pointerup', (e) => {
     const hit = farm.pick(e.clientX, e.clientY);
     if (hit?.kind === 'cooler') $('collect').click();
     else if (hit?.kind === 'tank' && state.tanks[hit.i] && performance.now() - (fedAt[hit.i] || -1e9) > FEED_COOLDOWN) {
-      // Hand-feed: a small instant bonus for tapping a tank, once per cooldown.
+      // Hand-feed: an extra unit goes on the belt, once per cooldown. Its money
+      // shows up at the cooler when it lands.
       fedAt[hit.i] = performance.now();
-      const bonus = E.tankRate(state, hit.i);
-      state.cash += bonus;
-      state.runEarnings += bonus;
-      state.totalEarnings += bonus;
-      floater('+$' + E.fmt(bonus), e.clientX, e.clientY - 20, 'tap');
+      if (E.handFeed(state, hit.i) > 0) {
+        floater(`+1 ${E.SPECIES[hit.i].unit}`, e.clientX, e.clientY - 20, 'feed');
+      }
     }
   } else if (performance.now() - drag.t < 80) {
     farm.focusVel = drag.vel;
@@ -430,7 +449,7 @@ canvas.addEventListener('pointercancel', () => { drag = null; farm.dragging = fa
 
 // ---------- time: live ticks + offline catch-up ----------
 
-// On open: work out how long we were away and pack that catch.
+// On open: work out what the conveyor delivered while we were away.
 welcomeBack(E.catchUp(state));
 if (loadProblem) {
   openSheet(() => `<h2>Save problem</h2><p>${loadProblem}</p>
@@ -455,12 +474,13 @@ function frame(t) {
   const dt = Math.min(0.1, (t - prev) / 1000);
   prev = t;
   // Wall-clock based, so a throttled/background tab still earns correctly.
-  welcomeBack(E.catchUp(state));
+  const res = E.catchUp(state);
+  welcomeBack(res);
   farm.sync(state);
-  farm.update(dt, t / 1000, state, state.pending / E.coolerCapacity(state));
+  farm.update(dt, t / 1000, state, state.pending / E.coolerCapacity(state), res.arrived);
   renderCards(false);
   renderHud();
-  tankFloaters(dt);
+  if (res.elapsed < 60) arrivalFloatersFor(res.arrived);
   saveT += dt;
   if (saveT > 5) { saveT = 0; save(); }
   requestAnimationFrame(frame);

@@ -5,8 +5,12 @@ just tanks, a conveyor, and a cooler that fills up while you're away.
 
 ## How it plays
 
-- **Tanks** sit along a conveyor. Each one grows a species and sends packed trays down the
-  belt into the **cooler** at the dock. You start with shrimp; later tanks unlock in order:
+- **Tanks** sit along a conveyor. Each one grows a species and sends its catch down the
+  belt one unit at a time (a shrimp, a crayfish, a tuna…) into the **cooler** at the dock.
+  A unit is worth money only once it lands in the cooler; the tank card shows what each
+  unit is worth and the tank's income per second. Higher levels send units faster (down to
+  one every 1.2 s) and make each one worth more. Tanks further up the belt take longer to
+  deliver. You start with shrimp; later tanks unlock in order:
   Shrimp → Crayfish → Tilapia → Catfish → Rainbow Trout → Salmon → Sturgeon → Bluefin Tuna.
 - **Upgrade** a tank to raise its income. Every tank doubles its income at levels
   10, 25, 50, 100, 150, 200, 300, 400 and 500.
@@ -14,9 +18,9 @@ just tanks, a conveyor, and a cooler that fills up while you're away.
   to start), so check in now and then.
 - **Lab** research is permanent: Premium Feed (×1.2 income per level), Cold Storage
   (+2h cooler per level, up to 24h), Hatchery Deals (−5% upgrade costs per level).
-- **Expand** (after $10B on one farm): sell the farm for **pearls**, each worth +10% income
-  forever. Tanks and cash reset; research stays.
-- Tap a tank to hand-feed it for a tiny bonus. Tap the cooler to collect. Drag to scroll.
+- **Expand** (after $870M on one farm): sell the farm for **pearls**, each worth +20% income
+  forever. Pearls grow with the cube root of what the farm made (8× the earnings for 2× the pearls). Tanks and cash reset; research stays.
+- Tap a tank to hand-feed it: it sends one bonus unit down the belt (paid when it lands). Tap the cooler to collect. Drag to scroll.
 
 ### Exponential prices
 
@@ -24,22 +28,33 @@ Everything costs exponentially more as you buy it:
 
 | Thing | Cost formula |
 | --- | --- |
-| Tank upgrade | `base × growth^(level−1)` with growth 1.16 (shrimp) up to 1.195 (tuna) |
-| New tank | each tier costs roughly 70–90× the last |
-| Premium Feed | `5K × 12^level` |
-| Cold Storage | `2K × 10^level` |
-| Hatchery Deals | `25K × 14^level` |
+| Tank upgrade | `base × growth^(level−1)` with growth 1.30 (shrimp) down to 1.22 (tuna) |
+| New tank | each tier costs roughly 25–60× the last |
+| Premium Feed | `130K × 8.6^level` |
+| Cold Storage | `520 × 12^level` |
+| Hatchery Deals | `150K × 4.5^level` |
 
-A simulated player who checks in every 4 hours reaches trout on day 2 and salmon around
-day 3–4; sturgeon and tuna need a few expansions.
+Simulated players (with 8 hours of sleep a day, expanding when it pays) reach:
+
+| Player | Crayfish | Tilapia | Catfish | Trout | Salmon | Sturgeon | Tuna | 1st expand |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Checks in hourly | 2h | 11h | day 2.3 | day 5.5 | day 13.6 | day 19.7 | day 25 | day 7.5 |
+| Every 4 hours | 8h | day 1.2 | day 3.3 | day 6.2 | day 16.2 | day 24.2 | 30+ days | day 8.7 |
 
 ### Offline progress
 
-The save stores the time you last had the game open. When you open it again (or switch
-back to it), it works out the hours since then, multiplies by your income, and packs that
-into the cooler — capped at the cooler's size — then shows a "Welcome back" summary. Live
-play uses the exact same wall-clock math, so there's no difference between playing and
-being away. Clocks that go backwards earn nothing.
+The save stores the time you last had the game open, plus every unit still riding the
+conveyor. When you open it again (or switch back to it), `tick()` in `js/economy.js` runs the
+conveyor forward by the time you were away: each tank spawns units on a fixed schedule, each
+unit takes `pathLength / BELT_SPEED` seconds to reach the cooler, and its value is added when
+it lands — until the cooler is full, after which arriving units are lost. Units that both
+spawn and land during the gap are counted in closed form, so days away cost the same as a
+second. Then a "Welcome back" summary shows what was delivered.
+
+Live play calls the exact same function every frame with the wall-clock time since the last
+frame. The result is identical for any step size (the tests check one big step against
+thousands of small ones), so there's no difference between playing and being away. Clocks
+that go backwards earn nothing.
 
 ## Play it
 
@@ -66,7 +81,7 @@ npm test       # economy unit tests
 
 | File | What's in it |
 | --- | --- |
-| `js/economy.js` | All game math: species, costs, research, offline catch-up. No DOM — unit-tested. |
+| `js/economy.js` | All game math: species, costs, research, the conveyor simulation, offline catch-up. No DOM — unit-tested. |
 | `js/models.js` | Every 3D model (creatures, tanks, conveyor, cooler, trees). |
 | `js/scene.js` | The three.js farm scene, animation, camera, tap picking. |
 | `js/main.js` | Save/load, UI, touch controls, game loop. |

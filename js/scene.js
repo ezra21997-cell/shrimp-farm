@@ -1,17 +1,33 @@
 // The 3D farm: tanks stacked along a main conveyor that feeds a cooler.
 import * as THREE from '../vendor/three.module.min.js';
 import * as M from './models.js';
-import { SPECIES } from './economy.js';
+import { SPECIES, SPACING, BELT_SPEED, FEED_LEN, MAIN_TO_COOLER, pathLength } from './economy.js';
 
-export const SPACING = 5;
+export { SPACING };
 const TANK_X = -2.6;
 const BELT_X = 1.5;
+const BELT_W = 1.6;
+const FEEDER_W = 0.7;
 const COOLER_Z = 5.2;
-const BELT_SPEED = 1.8;
+const FEED_X0 = TANK_X + 1.5;          // where units leave the tank
+const BELT_Y = 0.365;                   // top of the main belt and feeders (flush)
+const CORNER_R = 0.45;                  // units round the feeder -> belt corner on this radius
+const DIP_LEN = 0.8;                    // last stretch of path where units drop into the cooler
+const UNIT_CAP = 60;                    // instanced units per species
 const TANK_COLORS = ['#80cbc4', '#ffab91', '#9fa8da', '#a5d6a7', '#fff59d', '#f48fb1', '#b0bec5', '#81d4fa'];
-const TRAY_COLORS = ['#ff8a65', '#c62828', '#78909c', '#6d4c41', '#ec7f9a', '#ff7043', '#263238', '#1f3b73'];
 
 export function tankZ(i) { return -i * SPACING; }
+
+// The economy's path lengths must match the layout drawn here.
+if (Math.abs(BELT_X - FEED_X0 - FEED_LEN) > 1e-9) console.error('scene: FEED_LEN does not match the feeder layout');
+if (Math.abs(tankZ(0) + MAIN_TO_COOLER - (COOLER_Z - 0.6)) > 1e-9) console.error('scene: MAIN_TO_COOLER does not match the cooler position');
+
+// Stable pseudo-random in [0, 1) from an integer.
+function hash(n) {
+  const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 export class Farm {
   constructor(canvas) {
@@ -44,8 +60,7 @@ export class Farm {
 
     this.buildWorld();
     this.slots = SPECIES.map((sp, i) => this.buildSlot(i));
-    this.trays = [];
-    this.trayPool = new Map();
+    this.buildProducts();
     this.raycaster = new THREE.Raycaster();
     this.resize();
   }
@@ -85,8 +100,10 @@ export class Farm {
     // Main conveyor
     const beltStart = topZ + 3;
     const beltLen = COOLER_Z - 0.8 - beltStart;
-    this.belt = M.conveyor(beltLen);
-    this.belt.position.set(BELT_X, 0, beltStart + beltLen / 2);
+    const beltMid = beltStart + beltLen / 2;
+    // Open the tank-side rail wherever a feeder joins the belt.
+    this.belt = M.conveyor(beltLen, BELT_W, { gaps: SPECIES.map((_, i) => tankZ(i) - beltMid), gapWidth: FEEDER_W });
+    this.belt.position.set(BELT_X, 0, beltMid);
     this.scene.add(this.belt);
 
     this.cooler = M.cooler();
@@ -115,18 +132,25 @@ export class Farm {
 
   buildSlot(i) {
     const z = tankZ(i);
-    const slot = { i, group: new THREE.Group(), level: -1, creatures: [], spawnT: Math.random() };
+    const slot = { i, group: new THREE.Group(), level: -1, creatures: [] };
     slot.group.position.set(TANK_X, 0.1, z);
     this.scene.add(slot.group);
 
     slot.tank = M.tank(TANK_COLORS[i]);
     slot.plot = M.lockedPlot();
-    slot.feeder = M.conveyor(2.3, 0.7);
-    slot.feeder.rotation.y = Math.PI / 2;
-    slot.feeder.position.set(TANK_X + 1.5 + 1.15, 0, z);
-    slot.feeder.scale.y = 0.85;
+    // Feeder runs from the tank rim to the main belt's edge; its rails stop at
+    // the main belt's outer rail, which is open here (see buildWorld).
+    const feedEnd = BELT_X - BELT_W / 2;
+    const feedLen = feedEnd - FEED_X0;
+    slot.feeder = M.conveyor(feedLen, FEEDER_W, { railTrimEnd: 0.14 });
+    slot.feeder.rotation.y = Math.PI / 2; // local +Z -> world +X
+    slot.feeder.position.set(FEED_X0 + feedLen / 2, 0, z);
+    // Plugs the main belt's rail gap while this tank is locked.
+    slot.railPlug = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.26, FEEDER_W + 0.02), M.mat('#f57c00'));
+    slot.railPlug.position.set(BELT_X - BELT_W / 2 - 0.07, 0.36, z);
+    slot.railPlug.castShadow = true;
     slot.group.add(slot.tank, slot.plot);
-    this.scene.add(slot.feeder);
+    this.scene.add(slot.feeder, slot.railPlug);
     slot.tank.userData.slot = i;
     slot.plot.userData.slot = i;
     return slot;
@@ -143,6 +167,7 @@ export class Farm {
       const nextToUnlock = !unlocked && (slot.i === 0 || state.tanks[slot.i - 1] > 0);
       slot.tank.visible = unlocked;
       slot.feeder.visible = unlocked;
+      slot.railPlug.visible = !unlocked;
       if (!unlocked) while (slot.creatures.length) slot.tank.remove(slot.creatures.pop());
       slot.plot.visible = !unlocked && nextToUnlock;
       if (unlocked) {
@@ -176,20 +201,97 @@ export class Farm {
     obj.userData.popT = 0;
   }
 
-  spawnTray(i) {
-    if (this.trays.length > 60) return;
-    const pool = this.trayPool.get(i) || [];
-    const t = pool.pop() || M.tray(TRAY_COLORS[i]);
-    t.userData.i = i;
-    t.userData.stage = 0;
-    t.position.set(TANK_X + 1.5, 0.45, tankZ(i) + (Math.random() - 0.5) * 0.25);
-    t.rotation.y = (Math.random() - 0.5) * 0.4;
-    t.visible = true;
-    this.scene.add(t);
-    this.trays.push(t);
+  // One InstancedMesh per species for the units riding the conveyor.
+  buildProducts() {
+    const material = M.productMaterial();
+    this.products = SPECIES.map((sp) => {
+      const im = new THREE.InstancedMesh(M.productGeometry(sp.id), material, UNIT_CAP);
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.count = 0;
+      im.frustumCulled = false; // instances span the whole belt
+      im.castShadow = true;
+      this.scene.add(im);
+      return im;
+    });
+    // Per tank: distances seen last frame (front first) and the serial number of
+    // the front unit, so each unit keeps its own jitter while riding.
+    this.unitPrev = SPECIES.map(() => []);
+    this.unitSerial = SPECIES.map(() => 0);
+    this.unitBuckets = SPECIES.map(() => []);
+    this._obj = new THREE.Object3D();
+    this._tan = new THREE.Vector3();
   }
 
-  update(dt, time, state, coolerFrac) {
+  // World position (and tangent, if given) of a unit from tank i that has
+  // travelled d along its path: +X along the feeder, a rounded corner onto the
+  // main belt, +Z down the belt, then a dip into the cooler. `lat` shifts the
+  // unit sideways without breaking continuity through the corner.
+  unitPos(i, d, out = new THREE.Vector3(), tangent = null, lat = 0) {
+    const z0 = tankZ(i);
+    const a = FEED_LEN - CORNER_R, b = FEED_LEN + CORNER_R;
+    let px, pz, tx, tz;
+    if (d <= a) {
+      px = FEED_X0 + d; pz = z0; tx = 1; tz = 0;
+    } else if (d < b) {
+      const phi = ((d - a) / (b - a)) * Math.PI / 2;
+      px = BELT_X - CORNER_R + CORNER_R * Math.sin(phi);
+      pz = z0 + CORNER_R - CORNER_R * Math.cos(phi);
+      tx = Math.cos(phi); tz = Math.sin(phi);
+    } else {
+      px = BELT_X; pz = z0 + (d - FEED_LEN); tx = 0; tz = 1;
+    }
+    // Sideways offset along the normal (-tz, tx): +Z on the feeder, -X on the belt.
+    px += -tz * lat;
+    pz += tx * lat;
+    let y = BELT_Y;
+    const L = pathLength(i);
+    const dip = (d - (L - DIP_LEN)) / DIP_LEN;
+    if (dip > 0) y -= 0.6 * dip * dip;
+    out.set(px, y, pz);
+    if (tangent) tangent.set(tx, 0, tz);
+    return out;
+  }
+
+  // Fill the instanced meshes from state.transit.
+  updateUnits(transit) {
+    const buckets = this.unitBuckets;
+    for (const b of buckets) b.length = 0;
+    if (Array.isArray(transit)) {
+      for (const u of transit) if (buckets[u.i] && Number.isFinite(u.d)) buckets[u.i].push(u.d);
+    }
+    const o = this._obj, tan = this._tan;
+    for (let i = 0; i < buckets.length; i++) {
+      const ds = buckets[i];
+      ds.sort((x, y) => y - x); // front of the line first
+      // Units never overtake, so anything from last frame that was ahead of the
+      // current front unit has landed; shift serials by that many.
+      const prev = this.unitPrev[i];
+      const front = ds.length ? ds[0] : -Infinity;
+      let landed = 0;
+      while (landed < prev.length && prev[landed] > front + 1e-6) landed++;
+      this.unitSerial[i] += landed;
+      this.unitPrev[i] = ds.slice();
+
+      const im = this.products[i];
+      const n = Math.min(ds.length, UNIT_CAP);
+      const L = pathLength(i);
+      for (let k = 0; k < n; k++) {
+        const d = Math.min(ds[k], L);
+        const key = i * 100003 + this.unitSerial[i] + k;
+        // Narrow feeder, wider main belt: ramp the sideways jitter in after the corner.
+        const amp = 0.06 + 0.26 * smooth(FEED_LEN, FEED_LEN + 1.2, d);
+        const lat = (hash(key) * 2 - 1) * amp;
+        this.unitPos(i, d, o.position, tan, lat);
+        o.rotation.set(0, Math.atan2(-tan.z, tan.x) + (hash(key + 0.5) * 2 - 1) * 0.3, 0);
+        o.updateMatrix();
+        im.setMatrixAt(k, o.matrix);
+      }
+      im.count = n;
+      im.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  update(dt, time, state, coolerFrac, arrived) {
     // Camera pan with a little momentum.
     if (!this.dragging) {
       this.focusZ += this.focusVel * dt;
@@ -199,9 +301,12 @@ export class Farm {
     this.placeCamera();
 
     // Belts
-    const off = (time * BELT_SPEED) / 0.8;
-    this.belt.userData.tex.offset.y = -off;
-    for (const s of this.slots) if (s.feeder.visible) s.feeder.userData.tex.offset.y = -off;
+    // Slats are 0.8 world units apart. Texture +V points along local -Z (the top
+    // plane is rotated -90deg about X), and units travel along local +Z on both
+    // the main belt and the (rotated) feeders, so the offset grows with time.
+    const off = ((time * BELT_SPEED) / 0.8) % 1;
+    this.belt.userData.tex.offset.y = off;
+    for (const s of this.slots) if (s.feeder.visible) s.feeder.userData.tex.offset.y = off;
 
     // Creatures + water shimmer
     for (const slot of this.slots) {
@@ -212,16 +317,12 @@ export class Farm {
         u.a += u.speed * dt * (u.swim === 'crawl' ? 0.35 : 0.8);
         const r = u.r;
         c.position.set(Math.cos(u.a) * r, u.swim === 'crawl' ? 0.12 : u.y + Math.sin(time * 1.5 + u.phase) * 0.05, Math.sin(u.a) * r);
-        c.rotation.y = -u.a - (u.speed > 0 ? Math.PI / 2 : -Math.PI / 2) + Math.PI;
+        // Velocity is sign(speed) * (-sin a, 0, cos a). rotation.y = h turns the
+        // model's +X head to (cos h, 0, -sin h), so h = -a - sign(speed) * PI/2.
+        c.rotation.y = -u.a - Math.sign(u.speed) * Math.PI / 2;
         if (u.tail) u.tail.rotation.y = Math.sin(time * 8 + u.phase) * 0.45;
         if (u.swim === 'shrimp') c.rotation.z = Math.sin(time * 5 + u.phase) * 0.12;
       }
-      // Spawn trays (visual only — income is computed in economy.js).
-      const lv = slot.level;
-      const interval = Math.max(0.9, 2.6 / (1 + Math.log10(lv)));
-      slot.spawnT += dt;
-      if (slot.spawnT > interval) { slot.spawnT = 0; this.spawnTray(slot.i); }
-
       if (slot.group.userData.popT !== undefined) {
         const p = (slot.group.userData.popT += dt * 2.5);
         const s = p >= 1 ? 1 : 1 + Math.sin(p * Math.PI) * 0.2;
@@ -230,31 +331,9 @@ export class Farm {
       }
     }
 
-    // Move trays: along feeder (+x) then down the main belt (+z) into cooler.
-    const step = BELT_SPEED * dt;
-    for (let k = this.trays.length - 1; k >= 0; k--) {
-      const t = this.trays[k];
-      if (t.userData.stage === 0) {
-        t.position.x += step;
-        if (t.position.x >= BELT_X - 0.2 + (t.userData.i % 3) * 0.2) {
-          t.userData.stage = 1;
-          t.position.y = 0.48;
-        }
-      } else {
-        t.position.z += step;
-        if (t.position.z > COOLER_Z - 1.1) {
-          t.position.y -= step * 1.2;
-          if (t.position.z > COOLER_Z - 0.3) {
-            this.scene.remove(t);
-            this.trays.splice(k, 1);
-            const pool = this.trayPool.get(t.userData.i) || [];
-            pool.push(t);
-            this.trayPool.set(t.userData.i, pool);
-            this.coolerBump = 0.15;
-          }
-        }
-      }
-    }
+    // Units on the conveyor, and a bump for each one landing in the cooler.
+    this.updateUnits(state && state.transit);
+    if (arrived && arrived.length) this.coolerBump = 0.15;
 
     // Cooler fill and a little bump when catch lands.
     const fill = this.cooler.userData.fill;

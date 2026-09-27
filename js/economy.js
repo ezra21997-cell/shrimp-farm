@@ -3,29 +3,51 @@
 // Each species is one tank on the farm. Costs grow exponentially per level
 // (cost = upgradeBase * growth^(level-1)), income grows linearly per level and
 // doubles at milestone levels. Each tier unlocks for far more than the last.
+// `unit` is the noun for one unit of product, used in UI copy.
 export const SPECIES = [
-  { id: 'shrimp',   name: 'Shrimp',       unlock: 0,      rate: 1,      upgradeBase: 10,     growth: 1.16 },
-  { id: 'crayfish', name: 'Crayfish',     unlock: 1500,   rate: 8,      upgradeBase: 600,    growth: 1.165 },
-  { id: 'tilapia',  name: 'Tilapia',      unlock: 1e5,    rate: 60,     upgradeBase: 4e4,    growth: 1.17 },
-  { id: 'catfish',  name: 'Catfish',      unlock: 7e6,    rate: 450,    upgradeBase: 2.8e6,  growth: 1.175 },
-  { id: 'trout',    name: 'Rainbow Trout',unlock: 5e8,    rate: 3.4e3,  upgradeBase: 2e8,    growth: 1.18 },
-  { id: 'salmon',   name: 'Salmon',       unlock: 4e10,   rate: 2.6e4,  upgradeBase: 1.6e10, growth: 1.185 },
-  { id: 'sturgeon', name: 'Sturgeon',     unlock: 3.5e12, rate: 2e5,    upgradeBase: 1.4e12, growth: 1.19 },
-  { id: 'tuna',     name: 'Bluefin Tuna', unlock: 3e14,   rate: 1.5e6,  upgradeBase: 1.2e14, growth: 1.195 },
+  { id: 'shrimp',   name: 'Shrimp',       unlock: 0,      rate: 1,      upgradeBase: 7.1,     growth: 1.3, unit: 'shrimp' },
+  { id: 'crayfish', name: 'Crayfish',     unlock: 10000,   rate: 10,      upgradeBase: 4100,    growth: 1.286, unit: 'crayfish' },
+  { id: 'tilapia',  name: 'Tilapia',      unlock: 3.4e6,    rate: 110,     upgradeBase: 1.4e6,    growth: 1.272, unit: 'tilapia' },
+  { id: 'catfish',  name: 'Catfish',      unlock: 2e8,    rate: 1100,    upgradeBase: 8.2e7,  growth: 1.26, unit: 'catfish' },
+  { id: 'trout',    name: 'Rainbow Trout',unlock: 6e9,    rate: 11000,  upgradeBase: 2.5e9,    growth: 1.249, unit: 'trout' },
+  { id: 'salmon',   name: 'Salmon',       unlock: 1.7e11,   rate: 1.1e5,  upgradeBase: 7e10, growth: 1.239, unit: 'salmon' },
+  { id: 'sturgeon', name: 'Sturgeon',     unlock: 4.5e12, rate: 1.2e6,    upgradeBase: 1.8e12, growth: 1.23, unit: 'sturgeon' },
+  { id: 'tuna',     name: 'Bluefin Tuna', unlock: 1.2e14,   rate: 1.2e7,  upgradeBase: 4.9e13, growth: 1.221, unit: 'tuna' },
 ];
 
 export const MILESTONES = [10, 25, 50, 100, 150, 200, 300, 400, 500];
 
 // Research: global upgrades bought in the lab. All exponential.
 export const RESEARCH = {
-  feed:  { name: 'Premium Feed',   desc: 'All tanks earn ×1.2 per level.',             base: 5000, growth: 12, max: Infinity },
-  cold:  { name: 'Cold Storage',   desc: 'Cooler holds +2 hours of catch per level.',    base: 2000, growth: 10, max: 11 },
-  hatch: { name: 'Hatchery Deals', desc: 'Tank upgrades cost 5% less per level.',        base: 25000, growth: 14, max: 10 },
+  feed:  { name: 'Premium Feed',   desc: 'All tanks earn ×1.2 per level.',             base: 1.3e5, growth: 8.6, max: Infinity },
+  cold:  { name: 'Cold Storage',   desc: 'Cooler holds +2 hours of catch per level.',    base: 520, growth: 12, max: 11 },
+  hatch: { name: 'Hatchery Deals', desc: 'Tank upgrades cost 5% less per level.',        base: 1.5e5, growth: 4.5, max: 10 },
 };
 
 export const BASE_COOLER_HOURS = 2;
-export const PEARL_BONUS = 0.1;          // +10% income per pearl
-export const PRESTIGE_MIN = 1e10;         // run earnings needed before expanding
+export const PEARL_BONUS = 0.2;          // +20% income per pearl
+export const PRESTIGE_MIN = 8.7e8;         // run earnings needed before expanding
+
+// ---------- conveyor geometry (shared with the 3D scene) ----------
+// Each tank sends individual units of product along its side feeder, then down
+// the main belt into the cooler. Money only counts when a unit lands in the cooler.
+export const BELT_SPEED = 1.8;      // world units per second
+export const FEED_LEN = 2.6;        // side feeder: tank -> main belt
+export const MAIN_TO_COOLER = 4.6;  // main belt from tank 0's junction to the cooler
+export const SPACING = 5;           // distance between tanks along the main belt
+export const ARRIVED_CAP = 30;      // max individual arrivals tick() reports
+export const TRANSIT_CAP = 400;     // max units kept on the belt in a save
+
+// Distance a unit from tank i travels from spawn to the cooler.
+export function pathLength(i) {
+  return FEED_LEN + MAIN_TO_COOLER + SPACING * i;
+}
+
+// Seconds between units for a tank at `level`. Faster at higher levels, down to 1.2s.
+export function unitInterval(level) {
+  if (!(level >= 1)) return 2.6;
+  return Math.max(1.2, 2.6 / (1 + Math.log10(level)));
+}
 
 export function newState(now = Date.now()) {
   return {
@@ -38,6 +60,8 @@ export function newState(now = Date.now()) {
     tanks: SPECIES.map((_, i) => (i === 0 ? 1 : 0)), // level per tank, 0 = locked
     research: { feed: 0, cold: 0, hatch: 0 },
     buyMode: 1,          // 1, 10, or 'max'
+    transit: [],         // units on the belt: { i: tank, v: $ value, d: distance travelled }
+    acc: SPECIES.map(() => 0), // seconds since each tank's last unit
     lastSeen: now,
     created: now,
   };
@@ -70,6 +94,19 @@ export function sanitize(raw, now = Date.now()) {
   out.lastSeen = num(raw.lastSeen, now);
   out.created = num(raw.created, now);
   out.pending = Math.min(out.pending, coolerCapacity(out));
+  const acc = Array.isArray(raw.acc) ? raw.acc : [];
+  out.acc = SPECIES.map((_, i) => (out.tanks[i] ? Math.min(num(acc[i], 0), unitInterval(out.tanks[i])) : 0));
+  const transit = Array.isArray(raw.transit) ? raw.transit : [];
+  for (const u of transit) {
+    if (out.transit.length >= TRANSIT_CAP) break;
+    if (!u || typeof u !== 'object') continue;
+    const i = Number(u.i);
+    const v = Number(u.v);
+    const d = Number(u.d);
+    if (!Number.isInteger(i) || i < 0 || i >= SPECIES.length || !out.tanks[i]) continue;
+    if (!Number.isFinite(v) || v < 0 || !Number.isFinite(d)) continue;
+    out.transit.push({ i, v, d: Math.min(pathLength(i), Math.max(0, d)) });
+  }
   return out;
 }
 
@@ -97,6 +134,11 @@ export function totalRate(s) {
   let r = 0;
   for (let i = 0; i < SPECIES.length; i++) r += tankRate(s, i);
   return r;
+}
+
+// Dollar value of one unit from tank i, so steady-state income equals tankRate.
+export function unitValue(s, i) {
+  return tankRate(s, i) * unitInterval(s.tanks[i]);
 }
 
 export function coolerHours(s) {
@@ -148,7 +190,7 @@ export function researchCost(s, key) {
 
 export function pearlsForRun(s) {
   if (s.runEarnings < PRESTIGE_MIN) return 0;
-  return Math.floor(Math.sqrt(s.runEarnings / PRESTIGE_MIN));
+  return Math.floor(Math.cbrt(s.runEarnings / PRESTIGE_MIN) + 1e-9);
 }
 
 // ---------- actions (mutate state, return true on success) ----------
@@ -199,37 +241,105 @@ export function prestige(s, now = Date.now()) {
   fresh.research = { ...s.research };   // lab research carries over
   fresh.buyMode = s.buyMode;
   fresh.created = s.created;
-  Object.assign(s, fresh);
+  Object.assign(s, fresh);   // also clears transit and acc
   return gained;
 }
 
-// Advance the farm by `seconds`. Everything the tanks produce goes into the
-// cooler, which stops accepting catch once full. Used identically for live
-// play (small steps) and for offline catch-up (one big step), so both paths
-// always agree. Returns how much was actually packed.
-export function advance(s, seconds) {
-  if (!(seconds > 0)) return 0;
+// Tap a tank: an extra unit goes on the belt. Like every unit, it only pays
+// when it lands in the cooler. Returns its value (0 for a locked tank).
+export function handFeed(s, i) {
+  if (!s.tanks[i]) return 0;
+  const v = tankRate(s, i);
+  s.transit.push({ i, v, d: 0 });
+  return v;
+}
+
+// Advance the farm by `seconds`: tanks spawn units on a fixed schedule, units
+// ride the conveyor, and each unit's value goes into the cooler when it lands
+// there. Once the cooler is full, arriving units are lost. Exact for any step
+// size, so live play (tiny steps) and offline catch-up (one big step) agree.
+//
+// Per tank with interval T and acc a, unit k = 1, 2, … spawns at k*T - a and
+// lands pathLength/BELT_SPEED later. Units that spawn and land within the step
+// are counted in closed form; units still riding are added to s.transit.
+//
+// Returns { made, lost, arrived }: made went into the cooler, lost was thrown
+// away, arrived lists up to ARRIVED_CAP of the latest individual arrivals as
+// { i, v, lost } in the order they landed.
+export function tick(s, seconds) {
+  const res = { made: 0, lost: 0, arrived: [] };
+  if (!(seconds > 0)) return res;
+  if (!Array.isArray(s.transit)) s.transit = [];
+  if (!Array.isArray(s.acc)) s.acc = [];
+
+  let total = 0;        // value of everything landing this step
+  const events = [];    // { t, i, v } — only the latest few per source are kept
+  const keep = (t, i, v) => events.push({ t, i, v });
+
+  // Units already on the belt.
+  const dist = seconds * BELT_SPEED;
+  const riding = [];
+  for (const u of s.transit) {
+    const L = pathLength(u.i);
+    const d = u.d + dist;
+    if (d >= L) {
+      total += u.v;
+      keep((L - u.d) / BELT_SPEED, u.i, u.v);
+    } else {
+      riding.push({ i: u.i, v: u.v, d });
+    }
+  }
+
+  // New units from each tank.
+  for (let i = 0; i < SPECIES.length; i++) {
+    const lv = s.tanks[i];
+    if (!lv) { s.acc[i] = 0; continue; }
+    const T = unitInterval(lv);
+    const v = unitValue(s, i);
+    const travel = pathLength(i) / BELT_SPEED;
+    // After an upgrade the interval can shrink below acc; the next unit is due now.
+    const a = Math.min(Math.max(0, Number(s.acc[i]) || 0), T);
+    const n = Math.floor((a + seconds) / T);                                  // spawned this step
+    const m = Math.max(0, Math.min(n, Math.floor((a + seconds - travel) / T))); // …and landed
+    total += m * v;
+    for (let k = Math.max(1, m - ARRIVED_CAP + 1); k <= m; k++) keep(k * T - a + travel, i, v);
+    for (let k = m + 1; k <= n; k++) {
+      const d = (seconds - (k * T - a)) * BELT_SPEED;
+      riding.push({ i, v, d: Math.min(pathLength(i), Math.max(0, d)) });
+    }
+    s.acc[i] = Math.min(T, Math.max(0, a + seconds - n * T));
+  }
+  s.transit = riding;
+
+  // Fill the cooler.
   const room = Math.max(0, coolerCapacity(s) - s.pending);
-  const made = Math.min(room, totalRate(s) * seconds);
+  const made = Math.min(room, total);
   s.pending += made;
   s.runEarnings += made;
   s.totalEarnings += made;
-  return made;
+  res.made = made;
+  res.lost = total - made;
+
+  // Report the latest arrivals, with lost flags from the running total.
+  events.sort((x, y) => x.t - y.t);
+  const tail = events.slice(-ARRIVED_CAP);
+  let before = total;
+  for (const e of tail) before -= e.v;
+  for (const e of tail) {
+    before += e.v;
+    res.arrived.push({ i: e.i, v: e.v, lost: before > room * (1 + 1e-12) + 1e-9 });
+  }
+  return res;
 }
 
-// Called when the game opens or comes back to the foreground.
+// Called when the game opens, comes back to the foreground, and every frame.
 // Uses wall-clock time so it works no matter how long the phone was asleep.
 export function catchUp(s, now = Date.now()) {
   const elapsed = Math.max(0, (now - s.lastSeen) / 1000); // ignore clock going backwards
-  const before = s.pending;
-  const made = advance(s, elapsed);
+  const wasFullAlready = s.pending >= coolerCapacity(s) - 1e-9;
+  const r = tick(s, elapsed);
   s.lastSeen = now;
-  return {
-    elapsed,
-    made,
-    full: s.pending >= coolerCapacity(s) - 1e-9 && made < totalRate(s) * elapsed,
-    wasFullAlready: before >= coolerCapacity(s) - 1e-9,
-  };
+  return { elapsed, made: r.made, lost: r.lost, full: r.lost > 0, wasFullAlready, arrived: r.arrived };
 }
 
 // ---------- formatting ----------

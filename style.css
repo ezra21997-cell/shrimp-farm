@@ -83,7 +83,7 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; }
 .card .up:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 var(--blue-dark); }
 .card .unlock { background: var(--orange); box-shadow: 0 3px 0 var(--orange-dark); }
 .card .unlock:active:not(:disabled) { box-shadow: 0 1px 0 var(--orange-dark); }
-.card .earn { font-size: 12px; font-weight: 800; margin-top: 3px; color: #c5e1a5; }
+.card .earn { font-size: 11px; font-weight: 700; letter-spacing: -0.3px; margin: 3px -4px 0; color: #c5e1a5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card.locked { background: rgba(60, 50, 30, 0.85); }
 
 #floaters { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
@@ -93,6 +93,8 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; }
   animation: floatUp 1.4s ease-out forwards; transform: translate(-50%, -50%);
 }
 .floater.tap { color: #fff59d; text-shadow: 0 2px 0 #e65100, 0 0 4px #0006; }
+.floater.feed { font-size: 15px; color: #e0f7fa; text-shadow: 0 2px 0 #00838f, 0 0 4px #0006; }
+.floater.lost { font-size: 16px; color: #ffcdd2; text-shadow: 0 2px 0 #b71c1c, 0 0 4px #0006; }
 @keyframes floatUp {
   from { opacity: 0; margin-top: 0; }
   15% { opacity: 1; }

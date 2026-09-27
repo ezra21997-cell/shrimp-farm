@@ -1,6 +1,6 @@
 // Caches the whole game so it opens instantly and works offline.
 // Bump VERSION whenever any file changes so phones pick up the update.
-const VERSION = 'shrimpfarm-v2';
+const VERSION = 'shrimpfarm-v3';
 const FILES = [
   './',
   'index.html',
